@@ -234,15 +234,20 @@
 
   /* ============================================================
    * UA 判断：只识别微信 + QQ 内置浏览器
-   *   微信        ：MicroMessenger
-   *   QQ 内置     ：' QQ/8.x' 或 V1_AND_SQ / V1_IPH_SQ
-   *   QQ 浏览器   ：MQQBrowser / QQBrowser —— 属于独立浏览器，不拦截，
-   *                 直接跳转目标链接
+   *   微信      ：MicroMessenger
+   *   QQ 内置   ：带 QQ App 自身标记 'QQ/9.x' 或 V1_AND_SQ_9.x / V1_IPH_SQ_9.x
+   *
+   * 注意：不能拿 MQQBrowser / QQBrowser 当「独立浏览器」的排除依据。
+   * QQ 内置浏览器使用腾讯 TBS(X5) 内核，其 UA 同时带有
+   *   "MQQBrowser/6.2 TBS/047925 ... V1_AND_SQ_9.0.90 ... QQ/9.0.90"
+   * 即「内核标记」与「QQ App 标记」共存。真正能区分二者的是 QQ App
+   * 自己的版本号标记；独立的 QQ 浏览器 App 只有 MQQBrowser/QQBrowser，
+   * 不带 'QQ/数字' 与 V1_AND_SQ，因此会正常放行到目标链接。
    * ============================================================ */
   var ua = navigator.userAgent || '';
   var isWeChat = /MicroMessenger/i.test(ua);
-  var isQQBuiltin = !/MQQBrowser|QQBrowser/i.test(ua) &&
-                    (/(?:^|\s)QQ\/[\d.]/i.test(ua) || /V1_(?:AND|IPH)_SQ/i.test(ua));
+  var isQQBuiltin = /(?:^|\s)QQ\/[\d.]/i.test(ua) ||
+                    /V1_(?:AND|IPH)_SQ_[\d.]/i.test(ua);
   var isIOS = /iPhone|iPad|iPod/i.test(ua);
 
   /* ---------- 普通浏览器：立即跳转 ---------- */
