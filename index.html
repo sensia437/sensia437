@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="format-detection" content="telephone=no">
+<meta name="referrer" content="no-referrer">
+<title>请在浏览器中打开</title>
+<!--
+  微信 / QQ 内置浏览器引导页 —— 纯 HTML + CSS + JS，无依赖、无后端。
+
+  工作流程：
+    1. 微信 / QQ 内打开本页  -> 显示遮罩，引导点右上角「···」→「在浏览器中打开」；
+    2. 用户点「在浏览器中打开」，系统浏览器打开的仍是【当前页面地址】；
+    3. 本页被系统浏览器重新加载，检测到 UA 正常 -> location.replace() 到目标链接。
+
+  注意：微信、QQ 禁止网页通过 JS / URL scheme 直接唤起外部浏览器，
+  因此「遮罩 + 右上角箭头提示」是唯一稳定可靠的方案（各平台通用）。
+-->
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body { height: 100%; margin: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+                 "Helvetica Neue", "Microsoft YaHei", sans-serif;
+    background: #fff;
+    color: #fff;
+    overscroll-behavior: none;
+  }
+
+  /* 在内置浏览器里锁住页面，避免橡皮筋滚动露出后面的空白页 */
+  body.in-app {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background: #0b0e16;
+  }
+
+  .mask {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    flex-direction: column;
+    align-items: center;
+    padding: calc(env(safe-area-inset-top) + 24px) 24px calc(env(safe-area-inset-bottom) + 28px);
+    background: linear-gradient(180deg, #1b2233 0%, #0b0e16 100%);
+    text-align: center;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .mask.show { display: flex; }
+
+  /* 右上角「···」菜单示意气泡 */
+  .menu-bubble {
+    position: absolute;
+    top: calc(env(safe-area-inset-top) + 10px);
+    right: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    width: 54px;
+    height: 34px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, .14);
+    border: 1px solid rgba(255, 255, 255, .22);
+  }
+  .menu-bubble i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #fff;
+  }
+
+  /* 指向右上角菜单的手绘箭头 */
+  .arrow {
+    position: absolute;
+    top: calc(env(safe-area-inset-top) + 44px);
+    right: 18px;
+    width: 168px;
+    height: 168px;
+    animation: float 1.8s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-8px); }
+  }
+
+  .content {
+    margin-top: auto;
+    margin-bottom: auto;
+    max-width: 340px;
+  }
+
+  .step {
+    display: inline-block;
+    margin-bottom: 18px;
+    padding: 5px 12px;
+    font-size: 12px;
+    letter-spacing: .5px;
+    color: rgba(255, 255, 255, .7);
+    border: 1px solid rgba(255, 255, 255, .25);
+    border-radius: 999px;
+  }
+
+  .title {
+    margin: 0 0 12px;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.5;
+  }
+  .title em { font-style: normal; color: #ffd75e; }
+
+  .desc {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.8;
+    color: rgba(255, 255, 255, .72);
+  }
+  .desc b { color: #fff; font-weight: 600; }
+
+  .copy-btn {
+    display: block;
+    width: 100%;
+    max-width: 340px;
+    padding: 13px 16px;
+    font-size: 14px;
+    color: #fff;
+    background: rgba(255, 255, 255, .08);
+    border: 1px solid rgba(255, 255, 255, .28);
+    border-radius: 12px;
+    cursor: pointer;
+  }
+  .copy-btn:active { background: rgba(255, 255, 255, .18); }
+
+  .footnote {
+    margin: 16px 0 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, .38);
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(env(safe-area-inset-bottom) + 96px);
+    transform: translateX(-50%) translateY(8px);
+    padding: 10px 18px;
+    font-size: 13px;
+    white-space: nowrap;
+    color: #fff;
+    background: rgba(0, 0, 0, .82);
+    border-radius: 10px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .22s ease, transform .22s ease;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* 目标链接没配好时的兜底提示（仅普通浏览器会出现） */
+  .config-error {
+    padding: 40px 24px;
+    color: #333;
+    font-size: 15px;
+    line-height: 1.8;
+    text-align: center;
+  }
+  .config-error code {
+    padding: 2px 6px;
+    background: #f2f2f2;
+    border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div id="mask" class="mask" aria-hidden="true">
+  <!-- 右上角菜单示意 -->
+  <div class="menu-bubble" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <!-- 指向右上角的箭头 -->
+  <svg class="arrow" viewBox="0 0 168 168" fill="none" aria-hidden="true">
+    <path d="M24 148 C 34 92, 62 40, 138 24"
+          stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+    <path d="M138 24 L 116 26 M138 24 L 134 46"
+          stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+
+  <div class="content">
+    <span class="step">第 1 步 / 共 2 步</span>
+    <h1 class="title">请点击右上角 <em>···</em></h1>
+    <p class="desc">选择「<b id="openLabel">在浏览器中打开</b>」<br>即可继续访问</p>
+  </div>
+
+  <button id="copyBtn" class="copy-btn" type="button">复制当前链接，到浏览器粘贴打开</button>
+  <p class="footnote" id="footnote">当前页面在内置浏览器中打开，需切换到系统浏览器</p>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ============================================================
+   * 配置区：只需要改下面这一行
+   * ============================================================ */
+
+  // 目标链接：在普通浏览器里打开本页时，会立即跳转到这里。
+  // 换成你自己的地址即可，例如 'https://www.yoursite.com/download'
+  var DEFAULT_TARGET = 'https://xsbz.cc.cd';
+
+  /* ============================================================
+   * 目标链接解析
+   * 也支持用 ?to= 覆盖，方便同一个页面复用于多个目标，例如：
+   *   https://your.site/open.html?to=https%3A%2F%2Fwww.yoursite.com%2Fapp
+   * 只允许 http / https，避免 javascript: 等危险协议。
+   * 注意：?to= 仅用于你自己生成的链接，不要把它当成公开的跳转服务。
+   * ============================================================ */
+  function resolveTarget() {
+    var raw = (new URLSearchParams(location.search).get('to') || DEFAULT_TARGET).trim();
+    // 允许省略协议，例如 'yoursite.com/app' 自动补成 https://yoursite.com/app
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(raw) && !raw.startsWith('/')) {
+      raw = 'https://' + raw;
+    }
+    try {
+      var url = new URL(raw, location.href);
+      if (url.protocol === 'http:' || url.protocol === 'https:') return url.href;
+    } catch (e) { /* 非法地址，返回 null */ }
+    return null;
+  }
+
+  /* ============================================================
+   * UA 判断：只识别微信 + QQ 内置浏览器
+   *   微信        ：MicroMessenger
+   *   QQ 内置     ：' QQ/8.x' 或 V1_AND_SQ / V1_IPH_SQ
+   *   QQ 浏览器   ：MQQBrowser / QQBrowser —— 属于独立浏览器，不拦截，
+   *                 直接跳转目标链接
+   * ============================================================ */
+  var ua = navigator.userAgent || '';
+  var isWeChat = /MicroMessenger/i.test(ua);
+  var isQQBuiltin = !/MQQBrowser|QQBrowser/i.test(ua) &&
+                    (/(?:^|\s)QQ\/[\d.]/i.test(ua) || /V1_(?:AND|IPH)_SQ/i.test(ua));
+  var isIOS = /iPhone|iPad|iPod/i.test(ua);
+
+  /* ---------- 普通浏览器：立即跳转 ---------- */
+  if (!isWeChat && !isQQBuiltin) {
+    var target = resolveTarget();
+    if (target) {
+      // 用 replace 而不是 href：引导页不进入历史记录，返回键不会退回本页
+      location.replace(target);
+    } else {
+      document.body.innerHTML =
+        '<div class="config-error">目标链接未正确配置。<br>' +
+        '请修改 <code>index.html</code> 里的 <code>DEFAULT_TARGET</code>，' +
+        '或传入合法的 <code>?to=</code> 参数（仅支持 http / https）。</div>';
+    }
+    return;
+  }
+
+  /* ---------- 微信 / QQ 内置浏览器：显示引导遮罩 ---------- */
+  var appName = isWeChat ? '微信' : 'QQ';
+  document.getElementById('openLabel').textContent =
+    isIOS ? '在 Safari 中打开' : '在浏览器中打开';
+  document.getElementById('footnote').textContent =
+    '当前页面在' + appName + '内置浏览器中打开，需切换到系统浏览器';
+
+  var mask = document.getElementById('mask');
+  mask.classList.add('show');
+  mask.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('in-app');
+
+  /* ---------- 兜底：复制链接（部分定制 ROM / QQ 版本没有「在浏览器中打开」） ---------- */
+  var toastTimer;
+  function showToast(text) {
+    var toast = document.getElementById('toast');
+    toast.textContent = text;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toast.classList.remove('show'); }, 2200);
+  }
+
+  function legacyCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    var ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  document.getElementById('copyBtn').addEventListener('click', function () {
+    // 复制的必须是【当前页面地址】：在浏览器里打开它才会触发上面的自动跳转
+    var link = location.href;
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(link).then(
+        function () { showToast('链接已复制，请到浏览器粘贴打开'); },
+        function () {
+          showToast(legacyCopy(link) ? '链接已复制，请到浏览器粘贴打开' : '复制失败，请长按地址栏手动复制');
+        }
+      );
+    } else {
+      showToast(legacyCopy(link) ? '链接已复制，请到浏览器粘贴打开' : '复制失败，请长按地址栏手动复制');
+    }
+  });
+})();
+</script>
+</body>
+</html>
